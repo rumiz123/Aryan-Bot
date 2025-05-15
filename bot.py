@@ -4,7 +4,9 @@ import os
 import asyncio
 import requests
 from discord.ext import commands, tasks
+from discord import Webhook
 from dotenv import load_dotenv
+from typing import Optional
 
 ## Load Environment Variables
 load_dotenv()
@@ -22,16 +24,71 @@ status_messages = [
     "⚙️ | Type /help for commands!",
 ]
 
+# ---------------------- Webhook Logger with Queue ----------------------
+class WebhookLogger:
+    def __init__(self, webhook_url: str, delay: float = 2.0):
+        self.webhook_url = webhook_url
+        self.queue = asyncio.Queue()
+        self.delay = delay
+        self.task = None
+
+    def start(self):
+        if not self.task:
+            self.task = asyncio.create_task(self._run())
+
+    async def _run(self):
+        while True:
+            embed = await self.queue.get()
+            try:
+                response = requests.post(
+                    self.webhook_url,
+                    json={"embeds": [embed.to_dict()]},
+                    headers={"Content-Type": "application/json"}
+                )
+                if response.status_code != 204:
+                    print(f"[WEBHOOK ERROR] {response.status_code} | {response.text}")
+            except Exception as e:
+                print(f"[WEBHOOK SEND FAILED] {e}")
+            await asyncio.sleep(self.delay)
+
+    async def send(self, embed: discord.Embed):
+        await self.queue.put(embed)
+
+# Instantiate the logger
+logger = WebhookLogger(WEBHOOK_URL)
+
+def build_embed(title: str, description: str, level: str = "info") -> discord.Embed:
+    colors = {
+        "success": discord.Color.green(),
+        "error": discord.Color.red(),
+        "info": discord.Color.blurple(),
+        "warn": discord.Color.orange()
+    }
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=colors.get(level, discord.Color.default())
+    )
+    embed.set_footer(text="System Log")
+    return embed
+
 @client.event
 async def on_ready():
+    logger.start()  # start the webhook logger
     try:
-        synced_commands = await client.tree.sync()
-        print(f"+ [✅SYNCED✅] {len(synced_commands)} commands successfully.")
+        synced = await client.tree.sync()
+        await logger.send(build_embed("✅ Synced", f"{len(synced)} commands successfully synced.", "success"))
     except Exception as e:
-        print(f"- [❌SYNC FAILED❌] {e}")
+        print(f"[SYNC FAILED] {e}")
+        await logger.send(build_embed("❌ Sync Failed", f"Error: `{e}`", "error"))
 
-    print(f"+ [CONNECTED] {client.user.name} is online and ready!")
-    print(f"Currently in {len(client.guilds)} guilds.")
+    await logger.send(build_embed(
+        f"<:mellilogo:1341933009359732736> {client.user.name} Online",
+        f"**Logged in as:** {client.user} (`{client.user.id}`)\n"
+        f"**Guilds:** {len(client.guilds)}\n"
+        f"**Latency:** {round(client.latency * 1000)}ms",
+        "info"
+    ))
 
     if not update_status_loop.is_running():
         update_status_loop.start()
@@ -51,23 +108,6 @@ async def update_status_loop():
         )
     except Exception as e:
         await logger.send(build_embed("❌ Status Update Failed", f"`{e}`", "error"))
-
-def send_webhook_log(embed: discord.Embed):
-    """Sends an embed message to the specified webhook."""
-    headers = {
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "embeds": [embed.to_dict()]  # Convert the embed to a dictionary format that Discord's API expects
-    }
-
-    response = requests.post(WEBHOOK_URL, json=payload, headers=headers)
-
-    if response.status_code != 204:
-        print(f"Failed to send webhook. Status code: {response.status_code}, Response: {response.text}")
-    else:
-        pass
 
 async def load_cogs():
     """Loads all cogs and sends a summary embed after all have been processed."""
