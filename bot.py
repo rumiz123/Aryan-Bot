@@ -39,28 +39,18 @@ async def on_ready():
 
 @tasks.loop(seconds=10)
 async def update_status_loop():
-    """Updates the bot's presence with a rotating status every 10 seconds."""
     try:
-        # Static data
         guild_count = len(client.guilds)
-        latency = round(client.latency * 1000)  # Convert latency to ms
-
-        # Status messages with system stats
-        dynamic_statuses = [
-            f"📡 | Ping: {latency}ms",
-        ]
-
-        # Combine static and dynamic statuses
-        all_status_messages = status_messages + dynamic_statuses
-
-        # Cycle through messages
-        current_message = all_status_messages[update_status_loop.current_loop % len(all_status_messages)].format(guild_count=guild_count)
+        latency = round(client.latency * 1000)
+        latency_message = "📡 | Ping: 999+ms" if latency > 999 else f"📡 | Ping: {latency}ms"
+        all_statuses = status_messages + [latency_message]
+        current = all_statuses[update_status_loop.current_loop % len(all_statuses)].format(guild_count=guild_count)
         await client.change_presence(
-            status=discord.Status.online,
-            activity=discord.Activity(type=discord.ActivityType.watching, name=current_message)
+            status=discord.Status.dnd,
+            activity=discord.Activity(type=discord.ActivityType.watching, name=current)
         )
     except Exception as e:
-        print(f"[❌ERROR❌] Could not update presence: {e}")
+        await logger.send(build_embed("❌ Status Update Failed", f"`{e}`", "error"))
 
 def send_webhook_log(embed: discord.Embed):
     """Sends an embed message to the specified webhook."""
